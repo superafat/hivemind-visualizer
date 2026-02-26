@@ -1,0 +1,23 @@
+{
+  "name": "hivemind-visualizer",
+  "version": "0.1.0",
+  "description": "蜂神殿 — HiveMind Agent Visualizer",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
