@@ -10,12 +10,35 @@ interface AgentSprite {
   def: AgentDef;
   container: Phaser.GameObjects.Container;
   body: Phaser.GameObjects.Graphics;
+  bodyImage?: Phaser.GameObjects.Image; // Chibi 圖片
   nameText: Phaser.GameObjects.Text;
   statusBubble: Phaser.GameObjects.Graphics;
   statusIcon: Phaser.GameObjects.Text;
   state: AgentState;
   animTimer: number;
+  // 走動系統相關屬性
+  startX: number;
+  startY: number;
+  targetX?: number;
+  targetY?: number;
+  isMoving: boolean;
+  moveSpeed: number; // 像素/秒
+  moveTween?: Phaser.Tweens.Tween;
+  walkTween?: Phaser.Tweens.Tween;
+  moveTimer?: Phaser.Time.TimerEvent;
 }
+
+// 根據 tier 設定速度（像素/秒）
+const TIER_SPEEDS: Record<string, number> = {
+  'L1': 80,   // L1 走得慢，穩重
+  'L2': 100,  // L2 中等速度
+  'L3': 120,  // L3 走得快，勤勞
+  'special': 60, // 元始天尊最慢，漂浮感
+};
+
+// 移動間隔時間（毫秒）
+const MOVE_INTERVAL_MIN = 5000;
+const MOVE_INTERVAL_MAX = 12000;
 
 /**
  * HiveTemple — 蜂神殿主場景
@@ -58,6 +81,30 @@ export class HiveTemple extends Phaser.Scene {
     // === 頂部狀態列 ===
     this.createStatusBar(width);
 
+    // === 滑鼠滾輪縮放 ===
+    this.input.on("pointerwheel", (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[], deltaX: number, deltaY: number, deltaZ: number) => {
+      const zoomChange = deltaY > 0 ? -0.1 : 0.1;
+      const newZoom = Phaser.Math.Clamp(this.cameras.main.zoom + zoomChange, SCENE_CONFIG.camera.minZoom, SCENE_CONFIG.camera.maxZoom);
+      this.cameras.main.setZoom(newZoom);
+    });
+
+    // === 拖曳移動 (右鍵拖曳) ===
+    let dragStart: Phaser.Math.Vector2 | null = null;
+    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.rightButtonDown()) {
+        dragStart = new Phaser.Math.Vector2(pointer.x, pointer.y);
+      }
+    });
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      if (dragStart && pointer.rightButtonDown()) {
+        const cam = this.cameras.main;
+        cam.scrollX -= (pointer.x - dragStart.x) / cam.zoom;
+        cam.scrollY -= (pointer.y - dragStart.y) / cam.zoom;
+        dragStart.set(pointer.x, pointer.y);
+      }
+    });
+    this.input.on("pointerup", () => { dragStart = null; });
+
     // === 定時更新模擬狀態 ===
     this.time.addEvent({
       delay: 3000,
@@ -68,6 +115,9 @@ export class HiveTemple extends Phaser.Scene {
 
     // === 漂浮粒子 ===
     this.createFloatingParticles(width, height);
+
+    // === 啟動走動系統 ===
+    this.startMovementSystem();
   }
 
   // ─── 背景 ───
@@ -219,21 +269,23 @@ export class HiveTemple extends Phaser.Scene {
     };
 
     // 角色本體：優先使用 Chibi 圖片，否則用程式繪製
-    let body: Phaser.GameObjects.GameObject;
+    let bodyImage: Phaser.GameObjects.Image | undefined;
+    let body: Phaser.GameObjects.Graphics;
     const spriteKey = spriteKeyMap[def.id];
     
     if (spriteKey && this.textures.exists(spriteKey)) {
       // 使用 Chibi 圖片
-      body = this.add.image(0, 0, spriteKey);
-      (body as Phaser.GameObjects.Image).setScale(0.35); // 調整圖片大小適應顯示
+      bodyImage = this.add.image(0, 0, spriteKey);
+      bodyImage.setScale(0.35);
+      body = this.add.graphics(); // 建立一個空的 graphics 作為 body 介面
     } else {
       // 回退到程式繪製
       body = this.add.graphics();
-      this.drawAgentBody(body as Phaser.GameObjects.Graphics, def, 'idle');
+      this.drawAgentBody(body, def, 'idle');
     }
 
     // 名稱
-    const nameText = this.add.text(0, 22, `${def.emoji} ${def.name}`, {
+    const nameText = this.add.text(0, 22, def.emoji + ' ' + def.name, {
       fontFamily: '"Noto Sans TC", sans-serif',
       fontSize: '10px',
       color: '#E2E8F0',
@@ -247,19 +299,32 @@ export class HiveTemple extends Phaser.Scene {
       fontSize: '12px',
     }).setOrigin(0.5);
 
-    container.add([body, nameText, statusBubble, statusIcon]);
+    // 將所有元素加入 container
+    if (bodyImage) {
+      container.add([bodyImage, body, nameText, statusBubble, statusIcon]);
+    } else {
+      container.add([body, nameText, statusBubble, statusIcon]);
+    }
 
     // 互動
     const hitArea = new Phaser.Geom.Circle(0, 0, 20);
     container.setInteractive(hitArea, Phaser.Geom.Circle.Contains);
 
     container.on('pointerover', () => {
-      ((body as unknown) as Phaser.GameObjects.Components.Transform).setScale(spriteKey ? 0.42 : 1.15);
+      if (bodyImage) {
+        bodyImage.setScale(0.42);
+      } else {
+        body.setScale(1.15);
+      }
       this.showTooltip(def, x, y);
     });
 
     container.on('pointerout', () => {
-      ((body as unknown) as Phaser.GameObjects.Components.Transform).setScale(spriteKey ? 0.35 : 1.0);
+      if (bodyImage) {
+        bodyImage.setScale(0.35);
+      } else {
+        body.setScale(1.0);
+      }
       this.hideTooltip();
     });
 
@@ -270,12 +335,17 @@ export class HiveTemple extends Phaser.Scene {
     const sprite: AgentSprite = {
       def,
       container,
-      body: body instanceof Phaser.GameObjects.Graphics ? body : undefined as unknown as Phaser.GameObjects.Graphics,
+      body,
+      bodyImage,
       nameText,
       statusBubble,
       statusIcon,
       state: 'idle',
       animTimer: 0,
+      startX: x,
+      startY: y,
+      isMoving: false,
+      moveSpeed: TIER_SPEEDS[def.tier] || 100,
     };
 
     this.agentSprites.set(def.id, sprite);
@@ -322,12 +392,13 @@ export class HiveTemple extends Phaser.Scene {
   }
 
   private updateAgentVisual(sprite: AgentSprite): void {
-    const { statusBubble, statusIcon, state } = sprite;
+    const { statusBubble, statusIcon, state, isMoving } = sprite;
 
     statusBubble.clear();
 
+    // 移動中顯示特別的走路狀態 icon
     const stateConfig: Record<AgentState, { icon: string; color: number }> = {
-      idle:     { icon: '💤', color: COLORS.STATUS_IDLE },
+      idle:     { icon: isMoving ? '🚶' : '💤', color: COLORS.STATUS_IDLE },
       thinking: { icon: '💭', color: COLORS.STATUS_THINKING },
       replying: { icon: '💬', color: COLORS.STATUS_ACTIVE },
       active:   { icon: '⚡', color: COLORS.STATUS_ACTIVE },
@@ -360,8 +431,8 @@ export class HiveTemple extends Phaser.Scene {
       });
     }
 
-    // Active / Thinking 呼吸效果
-    if (state === 'thinking' || state === 'replying') {
+    // Active / Thinking 呼吸效果（不走動時）
+    if (!isMoving && (state === 'thinking' || state === 'replying')) {
       this.tweens.add({
         targets: sprite.container,
         scaleX: { from: 1.0, to: 1.05 },
@@ -373,6 +444,193 @@ export class HiveTemple extends Phaser.Scene {
       });
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 走動系統
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * 啟動走動系統 — 為每個 Agent 設定隨機移動計時器
+   */
+  private startMovementSystem(): void {
+    this.agentSprites.forEach((sprite) => {
+      this.scheduleRandomMove(sprite);
+    });
+  }
+
+  /**
+   * 安排下一次隨機移動
+   */
+  private scheduleRandomMove(sprite: AgentSprite): void {
+    const delay = Phaser.Math.Between(MOVE_INTERVAL_MIN, MOVE_INTERVAL_MAX);
+    
+    sprite.moveTimer = this.time.delayedCall(delay, () => {
+      this.startRandomMove(sprite);
+      // 移動完成後安排下一次
+      this.scheduleRandomMove(sprite);
+    });
+  }
+
+  /**
+   * 開始隨機移動
+   */
+  private startRandomMove(sprite: AgentSprite): void {
+    // 已在移動中則跳過
+    if (sprite.isMoving) return;
+    
+    // 離線狀態不移動
+    if (sprite.state === 'offline') return;
+
+    // 決定目標位置：Zone 內移動 or Zone 間移動（70% Zone 內，30% Zone 間）
+    const zoneMove = Math.random() < 0.7;
+    const target = zoneMove 
+      ? this.getRandomPositionInCurrentZone(sprite)
+      : this.getRandomPositionInRandomZone(sprite);
+
+    if (!target) return;
+
+    sprite.targetX = target.x;
+    sprite.targetY = target.y;
+    sprite.isMoving = true;
+    sprite.startX = sprite.container.x;
+    sprite.startY = sprite.container.y;
+
+    // 計算移動距離和時間
+    const dx = target.x - sprite.startX;
+    const dy = target.y - sprite.startY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const duration = (distance / sprite.moveSpeed) * 1000; // 毫秒
+
+    // 更新視覺效果（走路狀態）
+    this.updateAgentVisual(sprite);
+
+    // 開始走路動畫（搖晃效果）
+    this.startWalkAnimation(sprite);
+
+    // 執行移動 Tween
+    sprite.moveTween = this.tweens.add({
+      targets: sprite.container,
+      x: target.x,
+      y: target.y,
+      duration: duration,
+      ease: 'Linear',
+      onComplete: () => {
+        this.onMoveComplete(sprite);
+      },
+    });
+  }
+
+  /**
+   * 取得目標 Zone 的邊界
+   */
+  private getZoneBounds(sprite: AgentSprite): { x: number; y: number; width: number; height: number } | null {
+    // 根據目前位置判斷在哪個 Zone
+    const { x, y } = sprite.container;
+    
+    for (const zone of Object.values(ZONES)) {
+      if (x >= zone.x && x <= zone.x + zone.width &&
+          y >= zone.y && y <= zone.y + zone.height) {
+        return zone;
+      }
+    }
+    
+    // 預設返回 workshop Zone
+    return ZONES.hiveWorkshop;
+  }
+
+  /**
+   * 取得 Zone 內的隨機位置
+   */
+  private getRandomPositionInCurrentZone(sprite: AgentSprite): { x: number; y: number } | null {
+    const zone = this.getZoneBounds(sprite);
+    if (!zone) return null;
+
+    // Zone 內隨機位置（留邊距）
+    const padding = 30;
+    const x = Phaser.Math.Between(zone.x + padding, zone.x + zone.width - padding);
+    const y = Phaser.Math.Between(zone.y + padding, zone.y + zone.height - padding);
+
+    return { x, y };
+  }
+
+  /**
+   * 取得隨機 Zone 的隨機位置
+   */
+  private getRandomPositionInRandomZone(sprite: AgentSprite): { x: number; y: number } | null {
+    const zones = Object.values(ZONES);
+    const zone = zones[Phaser.Math.Between(0, zones.length - 1)];
+
+    const padding = 30;
+    const x = Phaser.Math.Between(zone.x + padding, zone.x + zone.width - padding);
+    const y = Phaser.Math.Between(zone.y + padding, zone.y + zone.height - padding);
+
+    return { x, y };
+  }
+
+  /**
+   * 開始走路動畫
+   */
+  private startWalkAnimation(sprite: AgentSprite): void {
+    // 走路時的搖晃/彈跳效果
+    sprite.walkTween = this.tweens.add({
+      targets: sprite.container,
+      scaleX: { from: 1.0, to: 1.08 },
+      scaleY: { from: 1.0, to: 0.92 },
+      duration: 150,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    // 如果有 bodyImage，也讓它稍微旋轉（腳步效果）
+    if (sprite.bodyImage) {
+      this.tweens.add({
+        targets: sprite.bodyImage,
+        angle: { from: -3, to: 3 },
+        duration: 200,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+  }
+
+  /**
+   * 移動完成
+   */
+  private onMoveComplete(sprite: AgentSprite): void {
+    sprite.isMoving = false;
+    sprite.targetX = undefined;
+    sprite.targetY = undefined;
+
+    // 停止走路動畫
+    if (sprite.walkTween) {
+      sprite.walkTween.stop();
+      sprite.walkTween = undefined;
+    }
+
+    // 重置 scale
+    sprite.container.setScale(1);
+    if (sprite.bodyImage) {
+      sprite.bodyImage.setAngle(0);
+    }
+
+    // 恢復原本狀態的視覺效果
+    this.updateAgentVisual(sprite);
+
+    // 短暫停留後可能改變狀態
+    this.time.delayedCall(1000, () => {
+      if (!sprite.isMoving && sprite.state !== 'offline' && sprite.state !== 'error') {
+        // 30% 機率變為 active
+        if (Math.random() < 0.3) {
+          sprite.state = 'active';
+          this.updateAgentVisual(sprite);
+        }
+      }
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
 
   // ─── UI ───
 
@@ -387,7 +645,7 @@ export class HiveTemple extends Phaser.Scene {
     bg.lineStyle(1, def.color, 0.6);
     bg.strokeRoundedRect(-60, -20, 120, 40, 6);
 
-    const text = this.add.text(0, -8, `${def.name} (${def.tier})`, {
+    const text = this.add.text(0, -8, def.name + ' (' + def.tier + ')', {
       fontFamily: '"Noto Sans TC", sans-serif',
       fontSize: '11px',
       color: '#FFBF00',
@@ -412,6 +670,7 @@ export class HiveTemple extends Phaser.Scene {
 
     const sprite = this.agentSprites.get(def.id);
     const state = sprite?.state ?? 'offline';
+    const isMoving = sprite?.isMoving ?? false;
 
     const w = 280, h = 200;
     const x = SCENE_CONFIG.width / 2 - w / 2;
@@ -431,7 +690,7 @@ export class HiveTemple extends Phaser.Scene {
     bg.fillRoundedRect(0, 0, w, 40, { tl: 10, tr: 10, bl: 0, br: 0 });
 
     // 標題
-    const title = this.add.text(w / 2, 20, `${def.emoji} ${def.name}`, {
+    const title = this.add.text(w / 2, 20, def.emoji + ' ' + def.name, {
       fontFamily: '"Noto Sans TC", sans-serif',
       fontSize: '16px',
       color: '#FFBF00',
@@ -440,11 +699,11 @@ export class HiveTemple extends Phaser.Scene {
 
     // 資訊
     const infoLines = [
-      `角色：${def.nameEn}`,
-      `層級：${def.tier}`,
-      `職責：${def.role}`,
-      `狀態：${state}`,
-      `模型：MiniMax-M2.5`,
+      '角色：' + def.nameEn,
+      '層級：' + def.tier,
+      '職責：' + def.role,
+      '狀態：' + state + (isMoving ? ' (走路中)' : ''),
+      '模型：MiniMax-M2.5',
     ];
 
     const infoText = this.add.text(20, 52, infoLines.join('\n'), {
@@ -490,7 +749,7 @@ export class HiveTemple extends Phaser.Scene {
 
     // 右側統計
     const totalAgents = AGENTS.length;
-    this.add.text(width - 12, 6, `Agents: ${totalAgents} | 🟢 Online`, {
+    this.add.text(width - 12, 6, 'Agents: ' + totalAgents + ' | 🟢 Online', {
       fontFamily: '"Noto Sans TC", sans-serif',
       fontSize: '11px',
       color: '#94A3B8',
@@ -503,11 +762,16 @@ export class HiveTemple extends Phaser.Scene {
     const states: AgentState[] = ['idle', 'thinking', 'replying', 'active', 'idle', 'idle', 'idle'];
 
     this.agentSprites.forEach(sprite => {
+      // 移動中不變更狀態
+      if (sprite.isMoving) return;
+
       // 停止舊的 tween
       this.tweens.killTweensOf(sprite.container);
       this.tweens.killTweensOf(sprite.body);
+      if (sprite.bodyImage) this.tweens.killTweensOf(sprite.bodyImage);
       sprite.container.setScale(1);
-      sprite.body.setAlpha(1);
+      if (sprite.body) sprite.body.setAlpha(1);
+      if (sprite.bodyImage) sprite.bodyImage.setAlpha(1);
 
       const newState = states[Math.floor(Math.random() * states.length)];
       sprite.state = newState;

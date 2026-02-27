@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>蜂神殿 — HiveMind Agent Visualizer</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -10,6 +10,7 @@
       background: #0F172A;
       overflow: hidden;
       font-family: 'Noto Sans TC', sans-serif;
+      touch-action: none;
     }
     #game-container {
       width: 100vw;
@@ -18,12 +19,70 @@
       align-items: center;
       justify-content: center;
     }
+    .zoom-controls {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 100;
+    }
+    .zoom-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      border: none;
+      background: rgba(15, 23, 42, 0.9);
+      color: #FFBF00;
+      font-size: 24px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transition: transform 0.2s, background 0.2s;
+    }
+    .zoom-btn:hover {
+      background: rgba(30, 41, 59, 0.95);
+      transform: scale(1.1);
+    }
+    .zoom-btn:active {
+      transform: scale(0.95);
+    }
+    .zoom-hint {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(15, 23, 42, 0.85);
+      color: #94A3B8;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 11px;
+      z-index: 100;
+    }
+    @media (max-width: 600px) {
+      .zoom-hint { display: none; }
+    }
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Press+Start+2P&display=swap" rel="stylesheet">
 </head>
 <body>
   <div id="game-container"></div>
+  
+  <!-- 縮放控制鈕 -->
+  <div class="zoom-controls">
+    <button class="zoom-btn" id="zoom-in" title="放大">+</button>
+    <button class="zoom-btn" id="zoom-out" title="縮小">−</button>
+    <button class="zoom-btn" id="zoom-reset" title="重置">⟲</button>
+  </div>
+  
+  <!-- 操作提示 -->
+  <div class="zoom-hint">
+    滾輪縮放 | 右鍵拖曳移動 | 觸控雙指縮放
+  </div>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

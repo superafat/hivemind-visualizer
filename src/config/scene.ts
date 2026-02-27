@@ -12,9 +12,9 @@ export const SCENE_CONFIG = {
 
   /** 相機設定 */
   camera: {
-    zoom: 2,
-    minZoom: 1,
-    maxZoom: 4,
+    zoom: 1,
+    minZoom: 0.5,
+    maxZoom: 3,
   },
 
   /** 背景色 */
