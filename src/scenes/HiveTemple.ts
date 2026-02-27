@@ -22,9 +22,19 @@ interface AgentSprite {
  */
 export class HiveTemple extends Phaser.Scene {
   private agentSprites: Map<string, AgentSprite> = new Map();
+  private agentImages: Map<string, Phaser.GameObjects.Image> = new Map();
   private infoPanel?: Phaser.GameObjects.Container;
   private titleText!: Phaser.GameObjects.Text;
   private statusBarBg!: Phaser.GameObjects.Graphics;
+
+  preload(): void {
+    // 載入 Chibi 角色圖片
+    this.load.image('jiangziya', 'src/assets/sprites/jiangziya.png');
+    this.load.image('daji', 'src/assets/sprites/daji.png');
+    this.load.image('kingzhou', 'src/assets/sprites/kingzhou.png');
+    this.load.image('qianliyan', 'src/assets/sprites/qianliyan.png');
+    this.load.image('shunfenger', 'src/assets/sprites/shunfenger.png');
+  }
 
   constructor() {
     super({ key: 'HiveTemple' });
@@ -199,9 +209,28 @@ export class HiveTemple extends Phaser.Scene {
   private createAgent(def: AgentDef, x: number, y: number): void {
     const container = this.add.container(x, y);
 
-    // 角色本體（程式繪製的 Chibi 角色）
-    const body = this.add.graphics();
-    this.drawAgentBody(body, def, 'idle');
+    // Agent ID 到 Chibi 圖片鍵名的映射
+    const spriteKeyMap: Record<string, string> = {
+      'jiangziya': 'jiangziya',
+      'daji': 'daji',
+      'zhouwang': 'kingzhou',
+      'qianliyan': 'qianliyan',
+      'shunfenger': 'shunfenger',
+    };
+
+    // 角色本體：優先使用 Chibi 圖片，否則用程式繪製
+    let body: Phaser.GameObjects.GameObject;
+    const spriteKey = spriteKeyMap[def.id];
+    
+    if (spriteKey && this.textures.exists(spriteKey)) {
+      // 使用 Chibi 圖片
+      body = this.add.image(0, 0, spriteKey);
+      (body as Phaser.GameObjects.Image).setScale(0.35); // 調整圖片大小適應顯示
+    } else {
+      // 回退到程式繪製
+      body = this.add.graphics();
+      this.drawAgentBody(body as Phaser.GameObjects.Graphics, def, 'idle');
+    }
 
     // 名稱
     const nameText = this.add.text(0, 22, `${def.emoji} ${def.name}`, {
@@ -225,12 +254,12 @@ export class HiveTemple extends Phaser.Scene {
     container.setInteractive(hitArea, Phaser.Geom.Circle.Contains);
 
     container.on('pointerover', () => {
-      body.setScale(1.15);
+      ((body as unknown) as Phaser.GameObjects.Components.Transform).setScale(spriteKey ? 0.42 : 1.15);
       this.showTooltip(def, x, y);
     });
 
     container.on('pointerout', () => {
-      body.setScale(1.0);
+      ((body as unknown) as Phaser.GameObjects.Components.Transform).setScale(spriteKey ? 0.35 : 1.0);
       this.hideTooltip();
     });
 
@@ -241,7 +270,7 @@ export class HiveTemple extends Phaser.Scene {
     const sprite: AgentSprite = {
       def,
       container,
-      body,
+      body: body instanceof Phaser.GameObjects.Graphics ? body : undefined as unknown as Phaser.GameObjects.Graphics,
       nameText,
       statusBubble,
       statusIcon,
